@@ -38,9 +38,13 @@ FIRE (Field Insight & Reporting Engine) is a web-based data analysis and reporti
 
 2. Set up environment variables for API keys:
    ```
-   export OPENROUTER_API_KEY="your_openrouter_api_key"
+   # Copy the example environment file
+   cp .env.example .env
+   
+   # Edit the .env file with your actual API keys
+   nano .env
    ```
-   Alternatively, create a `.env` file in the project root with your API key.
+   Make sure to get your OpenRouter API key from https://openrouter.ai/keys
 
 3. Run the application:
    ```
@@ -48,6 +52,12 @@ FIRE (Field Insight & Reporting Engine) is a web-based data analysis and reporti
    ```
 
 4. Open your browser and navigate to http://localhost:8501
+
+## Security Notes
+
+- The `.env` file containing your API keys is ignored by Git to prevent accidentally exposing credentials.
+- Never commit API keys or sensitive credentials to version control.
+- If you believe your API keys have been exposed, regenerate them immediately on the OpenRouter dashboard.
 
 ## User Journey
 
