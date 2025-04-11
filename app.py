@@ -59,7 +59,18 @@ def main():
     # Check for API key
     api_key = os.environ.get("OPENROUTER_API_KEY")
     if not api_key or api_key == "your_openrouter_api_key_here":
-        st.warning("⚠️ OpenRouter API key not configured. AI features will use backup methods with limited capabilities. Please add your API key to the .env file.")
+        st.warning("""
+        ⚠️ **OpenRouter API key not configured.** AI features will use backup methods with limited capabilities.
+        
+        To fix this issue:
+        1. Sign up for a free account at [OpenRouter](https://openrouter.ai/keys)
+        2. Create a new API key
+        3. Add your API key to the `.env` file:
+        ```
+        OPENROUTER_API_KEY=your_api_key_here
+        ```
+        4. Restart the application
+        """)
     
     # Sidebar for file upload and settings
     with st.sidebar:
@@ -675,67 +686,107 @@ def main():
             with tab5:
                 st.subheader("Document Analysis & AI-Powered Insights")
                 
-                # Initialize session state variables for document storage
-                if 'document_files' not in st.session_state:
-                    st.session_state.document_files = []
+                # Check for OpenRouter API key
+                api_key = os.environ.get("OPENROUTER_API_KEY")
+                if not api_key or api_key == "your_openrouter_api_key_here":
+                    st.error("API key not configured. Document analysis requires a valid OpenRouter API key.")
+                    st.info("""
+                    To enable document analysis:
+                    1. Sign up for a free account at [OpenRouter](https://openrouter.ai/keys)
+                    2. Create a new API key
+                    3. Add your API key to the `.env` file
+                    4. Restart the application
+                    """)
+                    st.markdown("---")
+                
+                # Initialize document uploads in session state if needed
+                if 'uploaded_documents' not in st.session_state:
+                    st.session_state.uploaded_documents = []
                 if 'document_queries' not in st.session_state:
                     st.session_state.document_queries = []
-                    
-                # Document uploader
+                
+                # Upload section
+                st.markdown("### Upload Supporting Documents")
                 st.markdown("Upload supporting documents (text, CSV, Excel files) for AI-powered analysis:")
-                uploaded_documents = st.file_uploader(
+                
+                uploaded_docs = st.file_uploader(
                     "Upload supporting documents",
-                    type=["txt", "csv", "xlsx", "xls"], 
+                    type=["txt", "pdf", "docx", "csv", "xlsx"],
                     accept_multiple_files=True,
-                    key="doc_analysis_tab5_uploader"
+                    key="document_uploader"
                 )
                 
-                if uploaded_documents:
-                    with st.spinner("Processing documents..."):
-                        for doc in uploaded_documents:
-                            if doc.name not in [d["name"] for d in st.session_state.document_files]:
+                if uploaded_docs:
+                    # Process the new document uploads
+                    with st.spinner("Processing document uploads..."):
+                        newly_uploaded = [doc for doc in uploaded_docs 
+                                        if doc.name not in [d["filename"] for d in st.session_state.uploaded_documents]]
+                        
+                        if newly_uploaded:
+                            for doc in newly_uploaded:
                                 try:
-                                    # Process document using our document processor
-                                    doc_info = document_processor.process_document(doc, doc.name)
+                                    # Process the document
+                                    doc_info = document_processor.process_document(doc)
                                     
-                                    # Store processed document info
-                                    st.session_state.document_files.append({
-                                        "name": doc.name,
-                                        "document_id": doc_info["document_id"],
-                                        "word_count": doc_info["metadata"]["word_count"],
-                                        "file_type": doc_info["metadata"]["file_type"]
+                                    # Add to session state
+                                    st.session_state.uploaded_documents.append({
+                                        "filename": doc.name,
+                                        "id": doc_info["id"],
+                                        "file_type": doc_info["file_type"],
+                                        "upload_date": doc_info["upload_date"],
+                                        "size": doc_info["size"]
                                     })
                                     
-                                    st.success(f"Successfully processed: {doc.name}")
+                                    st.success(f"Document '{doc.name}' processed successfully!")
                                 except Exception as e:
-                                    st.error(f"Error processing document {doc.name}: {str(e)}")
+                                    st.error(f"Error processing document '{doc.name}': {str(e)}")
                 
-                # Document list and preview
-                if st.session_state.document_files:
-                    st.subheader("Processed Documents")
-                    docs_df = pd.DataFrame(st.session_state.document_files)
-                    st.dataframe(docs_df)
+                # Show currently uploaded documents
+                if st.session_state.uploaded_documents:
+                    st.markdown("### Available Documents")
                     
-                    # Document content preview
-                    if len(st.session_state.document_files) > 0:
-                        selected_doc = st.selectbox(
-                            "Select a document to preview:",
-                            [doc["name"] for doc in st.session_state.document_files]
-                        )
-                        
-                        selected_doc_id = next((doc["document_id"] for doc in st.session_state.document_files if doc["name"] == selected_doc), None)
-                        
-                        if selected_doc_id:
-                            try:
-                                doc_content = document_processor.get_document_by_id(selected_doc_id)
-                                with st.expander("Document Content Preview", expanded=False):
-                                    st.text_area("Content", value=doc_content["text_content"][:1000] + "...", height=200, disabled=True)
-                            except Exception as e:
-                                st.error(f"Error loading document preview: {str(e)}")
+                    col1, col2, col3 = st.columns([3, 2, 2])
+                    with col1:
+                        st.markdown("**Filename**")
+                    with col2:
+                        st.markdown("**Type**")
+                    with col3:
+                        st.markdown("**Upload Date**")
                     
-                    # AI-powered document queries section
-                    st.subheader("Ask Questions About Documents")
+                    for doc in st.session_state.uploaded_documents:
+                        col1, col2, col3 = st.columns([3, 2, 2])
+                        with col1:
+                            st.markdown(doc["filename"])
+                        with col2:
+                            st.markdown(doc["file_type"])
+                        with col3:
+                            if isinstance(doc["upload_date"], str):
+                                st.markdown(doc["upload_date"])
+                            else:
+                                st.markdown(doc["upload_date"].strftime("%Y-%m-%d %H:%M"))
                     
+                    # Document viewer section
+                    st.subheader("Document Viewer")
+                    
+                    doc_ids = {doc["filename"]: doc["id"] for doc in st.session_state.uploaded_documents}
+                    selected_doc = st.selectbox("Select a document to view:", list(doc_ids.keys()))
+                    
+                    if selected_doc:
+                        selected_doc_id = doc_ids[selected_doc]
+                        try:
+                            doc_content = document_processor.get_document_by_id(selected_doc_id)
+                            with st.expander("Document Content Preview", expanded=False):
+                                st.text_area("Content", value=doc_content["text_content"][:1000] + "...", height=200, disabled=True)
+                        except Exception as e:
+                            st.error(f"Error loading document preview: {str(e)}")
+                
+                # AI-powered document queries section
+                st.subheader("Ask Questions About Documents")
+                
+                # Check again for OpenRouter API key before allowing document queries
+                if not api_key or api_key == "your_openrouter_api_key_here":
+                    st.warning("AI-powered document queries require a valid OpenRouter API key.")
+                else:
                     document_query = st.text_input(
                         "Enter your question about the documents:",
                         placeholder="E.g., 'What are the key findings in the report?'",
@@ -787,81 +838,86 @@ def main():
                                                 st.markdown(f"- **{source['filename']}** (Relevance: {source['score']:.2f})")
                                 except Exception as e:
                                     st.error(f"Error processing document query: {str(e)}")
-                                    if "API" in str(e) or "OpenRouter" in str(e) or "openai" in str(e).lower():
+                                    if "API" in str(e) or "OpenRouter" in str(e) or "openai" in str(e).lower() or "401" in str(e):
                                         st.warning("There was an issue with the AI service connection. The OpenRouter API may be temporarily unavailable, or there may be an issue with your API key.")
                                     st.info("Please check that your documents are properly uploaded and try again later.")
                         else:
                             st.warning("Please enter a query first.")
-                    
-                    # Document query history
-                    if st.session_state.document_queries:
-                        with st.expander("Document Query History", expanded=False):
-                            for i, item in enumerate(reversed(st.session_state.document_queries[-5:])):
-                                st.markdown(f"**Query {len(st.session_state.document_queries)-i}:** {item['query']}")
-                                st.markdown(item['response'])
-                                st.divider()
                 
+                # Document query history
+                if st.session_state.document_queries:
+                    with st.expander("Document Query History", expanded=False):
+                        for i, item in enumerate(reversed(st.session_state.document_queries[-5:])):
+                            st.markdown(f"**Query {len(st.session_state.document_queries)-i}:** {item['query']}")
+                            st.markdown(item['response'])
+                            st.divider()
+            
                 # Advanced Analysis with SmartDataFrame
                 if 'current_df' in st.session_state and st.session_state.current_df:
                     st.subheader("Advanced Data Analysis")
-                    st.markdown("Use AI to perform complex data analysis on your current dataset:")
                     
-                    advanced_query = st.text_area(
-                        "Describe the analysis you want to perform:",
-                        placeholder="E.g., 'Calculate the correlation between age and income, then create a scatter plot'",
-                        height=100,
-                        key="advanced_query_input"
-                    )
-                    
-                    if st.button("Analyze", key="run_advanced_analysis"):
-                        if advanced_query:
-                            with st.spinner("Performing AI-powered analysis..."):
-                                try:
-                                    # Show a message about connecting to AI service
-                                    smart_status = st.empty()
-                                    smart_status.info("Connecting to AI service... This may take a few moments.")
-                                    
-                                    # Create SmartDataFrame and run the query
-                                    current_data = st.session_state.data[st.session_state.current_df]
-                                    smart_df = SmartDataFrame(current_data)
-                                    result = smart_df.chat(advanced_query)
-                                    
-                                    # Clear the connecting message
-                                    smart_status.empty()
-                                    
-                                    if result["success"]:
-                                        st.success("Analysis completed successfully!")
+                    # Check for OpenRouter API key again 
+                    if not api_key or api_key == "your_openrouter_api_key_here":
+                        st.warning("AI-powered advanced analysis requires a valid OpenRouter API key.")
+                    else:
+                        st.markdown("Use AI to perform complex data analysis on your current dataset:")
+                        
+                        advanced_query = st.text_area(
+                            "Describe the analysis you want to perform:",
+                            placeholder="E.g., 'Calculate the correlation between age and income, then create a scatter plot'",
+                            height=100,
+                            key="advanced_query_input"
+                        )
+                        
+                        if st.button("Analyze", key="run_advanced_analysis"):
+                            if advanced_query:
+                                with st.spinner("Performing AI-powered analysis..."):
+                                    try:
+                                        # Show a message about connecting to AI service
+                                        smart_status = st.empty()
+                                        smart_status.info("Connecting to AI service... This may take a few moments.")
                                         
-                                        # Show the explanation
-                                        with st.expander("Explanation", expanded=True):
-                                            st.markdown(result["explanation"])
+                                        # Create SmartDataFrame and run the query
+                                        current_data = st.session_state.data[st.session_state.current_df]
+                                        smart_df = SmartDataFrame(current_data)
+                                        result = smart_df.chat(advanced_query)
                                         
-                                        # Show the generated code
-                                        with st.expander("Generated Python Code", expanded=False):
-                                            st.code(result["code"], language="python")
+                                        # Clear the connecting message
+                                        smart_status.empty()
                                         
-                                        # Show the result
-                                        st.subheader("Analysis Result")
-                                        if result["result"] is None or (hasattr(result["result"], 'empty') and result["result"].empty):
-                                            st.warning("The analysis was completed but returned no data. Try adjusting your query.")
+                                        if result["success"]:
+                                            st.success("Analysis completed successfully!")
+                                            
+                                            # Show the explanation
+                                            with st.expander("Explanation", expanded=True):
+                                                st.markdown(result["explanation"])
+                                            
+                                            # Show the generated code
+                                            with st.expander("Generated Python Code", expanded=False):
+                                                st.code(result["code"], language="python")
+                                            
+                                            # Show the result
+                                            st.subheader("Analysis Result")
+                                            if result["result"] is None or (hasattr(result["result"], 'empty') and result["result"].empty):
+                                                st.warning("The analysis was completed but returned no data. Try adjusting your query.")
+                                            else:
+                                                st.dataframe(result["result"])
                                         else:
-                                            st.dataframe(result["result"])
-                                    else:
-                                        st.error(f"Analysis failed: {result.get('error', 'Unknown error')}")
-                                        if "API" in str(result.get('error', '')) or "response" in str(result.get('error', '')):
-                                            st.warning("There may be an issue with the AI service connection. Try a simpler analysis request.")
-                                        
-                                        # If there's an AI response but the code execution failed, show it
-                                        if "ai_response" in result:
-                                            with st.expander("AI Response (Debug Information)", expanded=False):
-                                                st.markdown(result["ai_response"])
-                                except Exception as e:
-                                    st.error(f"Error during advanced analysis: {str(e)}")
-                                    if "API" in str(e) or "OpenRouter" in str(e) or "openai" in str(e).lower():
-                                        st.warning("There was an issue with the AI service connection. The service may be temporarily unavailable or there may be an issue with your API key.")
-                                    st.info("Try a simpler analysis request or use the Natural Language Queries tab instead.")
-                        else:
-                            st.warning("Please enter an analysis query first.")
+                                            st.error(f"Analysis failed: {result.get('error', 'Unknown error')}")
+                                            if "API" in str(result.get('error', '')) or "401" in str(result.get('error', '')):
+                                                st.warning("There may be an issue with the AI service connection. Make sure your API key is valid.")
+                                            
+                                            # If there's an AI response but the code execution failed, show it
+                                            if "ai_response" in result:
+                                                with st.expander("AI Response (Debug Information)", expanded=False):
+                                                    st.markdown(result["ai_response"])
+                                    except Exception as e:
+                                        st.error(f"Error during advanced analysis: {str(e)}")
+                                        if "API" in str(e) or "OpenRouter" in str(e) or "openai" in str(e).lower() or "401" in str(e):
+                                            st.warning("There was an issue with the AI service connection. Make sure your API key is valid.")
+                                        st.info("Try a simpler analysis request or use the Natural Language Queries tab instead.")
+                            else:
+                                st.warning("Please enter an analysis query first.")
                 else:
                     st.info("Please upload and select a dataset to use advanced analysis features.")
             

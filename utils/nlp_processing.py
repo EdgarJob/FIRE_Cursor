@@ -18,20 +18,24 @@ OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 # Log the API key status (without revealing the key)
-if OPENROUTER_API_KEY:
+if OPENROUTER_API_KEY and OPENROUTER_API_KEY != "your_openrouter_api_key_here":
     logger.info("OpenRouter API key found in environment variables")
 else:
-    logger.warning("OpenRouter API key not found in environment variables")
+    logger.warning("OpenRouter API key not found or default value is being used")
+    OPENROUTER_API_KEY = None  # Set to None to handle gracefully
 
-# Initialize the OpenAI client with OpenRouter base URL
-client = OpenAI(
-    base_url=OPENROUTER_BASE_URL,
-    api_key=OPENROUTER_API_KEY,
-    default_headers={
-        "HTTP-Referer": "https://fire.replit.app",
-        "X-Title": "FIRE: Field Insight & Reporting Engine"
-    }
-)
+# Initialize the OpenAI client with OpenRouter base URL if API key is available
+if OPENROUTER_API_KEY:
+    client = OpenAI(
+        base_url=OPENROUTER_BASE_URL,
+        api_key=OPENROUTER_API_KEY,
+        default_headers={
+            "HTTP-Referer": "https://fire.replit.app",
+            "X-Title": "FIRE: Field Insight & Reporting Engine"
+        }
+    )
+else:
+    client = None
 
 # Dictionary of keywords to look for in queries
 AGGREGATION_KEYWORDS = {
