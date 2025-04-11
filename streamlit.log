@@ -1,7 +1,7 @@
 
   You can now view your Streamlit app in your browser.
 
-  URL: http://0.0.0.0:8501
+  URL: http://0.0.0.0:8502
 
   For better performance, install the Watchdog module:
 
@@ -9,3 +9,15 @@
   $ pip install watchdog
             
 INFO:utils.nlp_processing:OpenRouter API key found in environment variables
+INFO:utils.nlp_processing:Making OpenRouter API call...
+INFO:httpx:HTTP Request: POST https://openrouter.ai/api/v1/chat/completions "HTTP/1.1 401 Unauthorized"
+ERROR:utils.nlp_processing:Error processing API response: Error code: 401 - {'error': {'message': 'No auth credentials found', 'code': 401}}
+INFO:utils.rag_engine:Making RAG API call to OpenRouter...
+INFO:httpx:HTTP Request: POST https://openrouter.ai/api/v1/chat/completions "HTTP/1.1 401 Unauthorized"
+ERROR:utils.rag_engine:RAG API call error: Error code: 401 - {'error': {'message': 'No auth credentials found', 'code': 401}}
+INFO:utils.rag_engine:Making RAG API call to OpenRouter...
+INFO:httpx:HTTP Request: POST https://openrouter.ai/api/v1/chat/completions "HTTP/1.1 401 Unauthorized"
+ERROR:utils.rag_engine:RAG API call error: Error code: 401 - {'error': {'message': 'No auth credentials found', 'code': 401}}
+INFO:utils.rag_engine:Making RAG API call to OpenRouter...
+INFO:httpx:HTTP Request: POST https://openrouter.ai/api/v1/chat/completions "HTTP/1.1 401 Unauthorized"
+ERROR:utils.rag_engine:RAG API call error: Error code: 401 - {'error': {'message': 'No auth credentials found', 'code': 401}}

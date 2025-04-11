@@ -16,7 +16,7 @@ from utils.data_cleaning import (get_data_quality_report, fix_missing_values,
                                 handle_outliers, remove_duplicates, fix_data_types,
                                 standardize_column_names, apply_column_transformations,
                                 create_derived_features, filter_rows)
-from templates.analysis_templates import get_templates, apply_template
+from templates.analysis_templates import get_templates, get_flat_templates, apply_template
 from utils.database import (
     save_file_to_db, get_file_from_db, get_all_files, load_dataframe_from_file,
     save_query_to_db, get_query_history, save_visualization_to_db, 
@@ -25,6 +25,11 @@ from utils.database import (
 from utils.document_processing import document_processor
 from utils.rag_engine import rag_engine
 from utils.smart_dataframe import SmartDataFrame
+from utils.template_generator import (
+    generate_custom_template, save_custom_template, 
+    load_custom_templates, get_custom_templates_for_ui,
+    execute_custom_template
+)
 
 # Ensure temp directory exists
 os.makedirs("tmp", exist_ok=True)
@@ -340,32 +345,269 @@ def main():
             with tab2:
                 st.subheader("Analysis Templates")
                 
-                templates = get_templates()
-                selected_template = st.selectbox(
-                    "Choose an analysis template:",
-                    list(templates.keys())
-                )
+                # Create template tabs for built-in and custom templates
+                template_tabs = st.tabs(["Built-in Templates", "Custom Templates", "Create Template"])
                 
-                if st.button("Apply Template"):
-                    with st.spinner("Applying template..."):
-                        try:
-                            result, viz_type, description = apply_template(selected_template, current_data)
+                with template_tabs[0]:  # Built-in Templates tab
+                    templates = get_templates()
+                    
+                    # Create a two-level selection system for templates
+                    category = st.selectbox(
+                        "Select a template category:",
+                        list(templates.keys()),
+                        key="builtin_template_category"
+                    )
+                    
+                    # Get templates for the selected category
+                    category_templates = templates[category]
+                    
+                    # Select a specific template from the category
+                    template_name = st.selectbox(
+                        "Choose a template:",
+                        list(category_templates.keys()),
+                        format_func=lambda x: category_templates[x],
+                        key="builtin_template_name"
+                    )
+                    
+                    if st.button("Apply Template", key="apply_builtin_template"):
+                        with st.spinner("Applying template..."):
+                            try:
+                                result, viz_type, description = apply_template(template_name, current_data)
+                                
+                                st.markdown(f"**{description}**")
+                                st.write(result)
+                                
+                                # Create visualization
+                                fig = create_visualization(result, viz_type, template_name)
+                                st.plotly_chart(fig, use_container_width=True, key=f"template_viz_{template_name}")
+                                
+                                # Store in visualization history
+                                st.session_state.visualization_history.append({
+                                    "query": f"Template: {template_name}",
+                                    "viz_type": viz_type,
+                                    "result": result
+                                })
+                            except Exception as e:
+                                st.error(f"Error applying template: {str(e)}")
+                
+                with template_tabs[1]:  # Custom Templates tab
+                    # Load custom templates
+                    if 'custom_templates' not in st.session_state:
+                        st.session_state.custom_templates = load_custom_templates()
+                    
+                    if not st.session_state.custom_templates:
+                        st.info("No custom templates found. Create a template in the 'Create Template' tab.")
+                    else:
+                        # Add an auto-fix all button
+                        if st.button("Auto-Fix All Templates", key="fix_all_templates"):
+                            fixed_count = 0
+                            with st.spinner("Fixing templates..."):
+                                for template_name, template_data in st.session_state.custom_templates.items():
+                                    original_code = template_data["code"]
+                                    fixed_code = fix_generated_code(original_code)
+                                    
+                                    if fixed_code != original_code:
+                                        # Template needed fixing
+                                        template_data["code"] = fixed_code
+                                        template_data["auto_fixed"] = True
+                                        
+                                        # Save the fixed template
+                                        save_custom_template(template_data)
+                                        fixed_count += 1
                             
-                            st.markdown(f"**{description}**")
-                            st.write(result)
+                            if fixed_count > 0:
+                                st.success(f"Fixed {fixed_count} templates! Try running them now.")
+                            else:
+                                st.info("No templates needed fixing.")
+                        
+                        # Show available custom templates
+                        custom_template_names = list(st.session_state.custom_templates.keys())
+                        selected_custom_template = st.selectbox(
+                            "Select a custom template:",
+                            custom_template_names,
+                            key="custom_template_select"
+                        )
+                        
+                        # Show template description
+                        if selected_custom_template in st.session_state.custom_templates:
+                            template_info = st.session_state.custom_templates[selected_custom_template]
+                            st.caption(f"Description: {template_info.get('description', 'No description available')}")
+                            st.caption(f"Created: {template_info.get('timestamp', 'Unknown date')}")
                             
-                            # Create visualization
-                            fig = create_visualization(result, viz_type, selected_template)
-                            st.plotly_chart(fig, use_container_width=True, key=f"template_viz_{selected_template}")
+                            # Option to view the code
+                            with st.expander("View Template Code"):
+                                st.code(template_info.get('code', 'Code not available'), language="python")
                             
-                            # Store in visualization history
-                            st.session_state.visualization_history.append({
-                                "query": f"Template: {selected_template}",
-                                "viz_type": viz_type,
-                                "result": result
-                            })
-                        except Exception as e:
-                            st.error(f"Error applying template: {str(e)}")
+                            # Apply the custom template
+                            if st.button("Apply Custom Template", key="apply_custom_template"):
+                                with st.spinner("Applying custom template..."):
+                                    try:
+                                        result, viz_type, description = execute_custom_template(selected_custom_template, current_data)
+                                        
+                                        st.markdown(f"**{description}**")
+                                        st.write(result)
+                                        
+                                        # Create visualization
+                                        fig = create_visualization(result, viz_type, selected_custom_template)
+                                        st.plotly_chart(fig, use_container_width=True, key=f"custom_viz_{selected_custom_template}")
+                                        
+                                        # Store in visualization history
+                                        st.session_state.visualization_history.append({
+                                            "query": f"Custom Template: {selected_custom_template}",
+                                            "viz_type": viz_type,
+                                            "result": result
+                                        })
+                                    except Exception as e:
+                                        error_msg = str(e)
+                                        st.error(f"Error applying custom template: {error_msg}")
+                                        
+                                        # Show detailed error information and fix options
+                                        with st.expander("Troubleshoot Template", expanded=True):
+                                            st.markdown("### Template Error Details")
+                                            st.markdown("""
+                                            The template execution failed. This could be due to:
+                                            1. The 'col' variable issue - a common error in AI-generated code
+                                            2. Missing or differently named columns in your dataset
+                                            3. Incorrect data types or operations
+                                            """)
+                                            
+                                            st.subheader("Edit Template Code")
+                                            if "code" in st.session_state.custom_templates[selected_custom_template]:
+                                                template_code = st.session_state.custom_templates[selected_custom_template]["code"]
+                                                edited_code = st.text_area("Template Code", 
+                                                                        value=template_code, 
+                                                                        height=400,
+                                                                        key=f"edit_code_{selected_custom_template}")
+                                                
+                                                if st.button("Save and Retry", key="save_edited_code"):
+                                                    # Update the template with edited code
+                                                    st.session_state.custom_templates[selected_custom_template]["code"] = edited_code
+                                                    
+                                                    # Save to disk
+                                                    save_custom_template(st.session_state.custom_templates[selected_custom_template])
+                                                    
+                                                    st.success("Template updated. Try applying it again.")
+                                                    st.experimental_rerun()
+                            
+                            # Fix template button for errors
+                            if "Error" in st.session_state and selected_custom_template in st.session_state["Error"]:
+                                with st.expander("Fix Template", expanded=True):
+                                    st.markdown(f"**Error with template: {st.session_state['Error'][selected_custom_template]}**")
+                                    
+                                    if st.button("Auto-Fix Template", key="auto_fix_template"):
+                                        try:
+                                            # Apply auto-fix to the template
+                                            template = st.session_state.custom_templates[selected_custom_template]
+                                            template["code"] = fix_generated_code(template["code"])
+                                            
+                                            # Save fixed template
+                                            save_custom_template(template)
+                                            
+                                            st.success("Template auto-fixed. Try applying it again.")
+                                            if "Error" in st.session_state:
+                                                if selected_custom_template in st.session_state["Error"]:
+                                                    del st.session_state["Error"][selected_custom_template]
+                                            st.experimental_rerun()
+                                        except Exception as fix_error:
+                                            st.error(f"Error fixing template: {str(fix_error)}")
+                            
+                            # Delete template option
+                            if st.button("Delete Template", key="delete_custom_template"):
+                                try:
+                                    # Remove from session state
+                                    template = st.session_state.custom_templates.pop(selected_custom_template)
+                                    
+                                    # Remove from disk
+                                    template_path = os.path.join("custom_templates", f"{template['name'].replace(' ', '_')}.json")
+                                    if os.path.exists(template_path):
+                                        os.remove(template_path)
+                                    
+                                    st.success(f"Template '{selected_custom_template}' deleted successfully.")
+                                    st.experimental_rerun()
+                                except Exception as e:
+                                    st.error(f"Error deleting template: {str(e)}")
+                
+                with template_tabs[2]:  # Create Template tab
+                    st.markdown("### Create Custom Analysis Template")
+                    st.markdown("""
+                    Use AI to generate a custom analysis template for your data. Describe what analysis you want to perform,
+                    and the AI will create a reusable template that you can apply to your data.
+                    """)
+                    
+                    # Template information
+                    template_name = st.text_input("Template Name", placeholder="Give your template a unique name")
+                    template_description = st.text_area(
+                        "Analysis Description", 
+                        placeholder="Describe the analysis you want the template to perform. For example: 'Compare the distribution of program completion rates by gender and age group, showing the top performers in each category.'"
+                    )
+                    
+                    # Generate button
+                    if st.button("Generate Template", key="generate_custom_template"):
+                        if not template_name or not template_description:
+                            st.error("Please provide both a template name and description.")
+                        else:
+                            with st.spinner("Generating template using AI... This may take a moment."):
+                                try:
+                                    # Check if current data is available
+                                    if current_data is None or current_data.empty:
+                                        st.error("Please load data before creating a template.")
+                                    else:
+                                        # Generate the template
+                                        template = generate_custom_template(
+                                            description=template_description,
+                                            df=current_data,
+                                            template_name=template_name
+                                        )
+                                        
+                                        # Save the template
+                                        if save_custom_template(template):
+                                            st.success(f"Template '{template_name}' created successfully!")
+                                            
+                                            # Show preview of the generated code
+                                            with st.expander("Template Code", expanded=True):
+                                                st.code(template["code"], language="python")
+                                                
+                                            # Option to apply immediately
+                                            if st.button("Apply New Template Now", key="apply_new_template"):
+                                                with st.spinner("Applying template..."):
+                                                    try:
+                                                        result, viz_type, description = execute_custom_template(template_name, current_data)
+                                                        
+                                                        st.markdown(f"**{description}**")
+                                                        st.write(result)
+                                                        
+                                                        # Create visualization
+                                                        fig = create_visualization(result, viz_type, template_name)
+                                                        st.plotly_chart(fig, use_container_width=True, key=f"new_template_viz")
+                                                        
+                                                        # Store in visualization history
+                                                        st.session_state.visualization_history.append({
+                                                            "query": f"Custom Template: {template_name}",
+                                                            "viz_type": viz_type,
+                                                            "result": result
+                                                        })
+                                                    except Exception as e:
+                                                        st.error(f"Error applying template: {str(e)}")
+                                        else:
+                                            st.error("Failed to save the template.")
+                                except Exception as e:
+                                    st.error(f"Error generating template: {str(e)}")
+                    
+                    # Example section
+                    with st.expander("See Example Descriptions"):
+                        st.markdown("""
+                        Here are some examples of good template descriptions:
+                        
+                        1. **Program Impact Analysis**: "Create a template that calculates the average impact scores across different program types, and identifies which demographics show the highest improvement rates."
+                        
+                        2. **Regional Comparison**: "Compare key performance metrics across different regions, highlighting outliers and identifying regions that need additional support."
+                        
+                        3. **Beneficiary Progression**: "Track how beneficiaries progress through program stages over time, showing completion rates and identifying potential bottlenecks."
+                        
+                        4. **Funding Efficiency**: "Analyze the relationship between funding amounts and outcome measures, calculating cost per beneficiary and identifying the most cost-effective programs."
+                        
+                        5. **Vulnerability Index**: "Create a vulnerability score based on multiple indicators (like income, health status, and housing), then show distribution of vulnerable groups across regions."
+                        """)
             
             # Tab 3: Visualizations
             with tab3:
