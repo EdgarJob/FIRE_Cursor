@@ -92,31 +92,91 @@ def parse_query_with_ai(query: str, df: pd.DataFrame) -> Dict[str, Any]:
             # Fix for empty dataframes or columns - use head instead of sample
             if len(df[col].dropna()) > 0:
                 sample_values = df[col].dropna().head(3).tolist()
+                # Add statistical info for numeric columns
+                if pd.api.types.is_numeric_dtype(df[col]):
+                    try:
+                        stats = {
+                            "min": float(df[col].min()),
+                            "max": float(df[col].max()),
+                            "mean": float(df[col].mean())
+                        }
+                    except:
+                        stats = {}
+                else:
+                    # Add value counts for categorical columns
+                    try:
+                        top_values = df[col].value_counts().head(3).to_dict()
+                        stats = {"top_values": {str(k): int(v) for k, v in top_values.items()}}
+                    except:
+                        stats = {}
             else:
                 sample_values = ["N/A"]  # Use placeholder for empty columns
+                stats = {}
                 
             column_info.append({
                 "name": col,
                 "type": dtype,
-                "sample_values": sample_values
+                "sample_values": sample_values,
+                "stats": stats
             })
         
-        # Create comprehensive prompt for the API
+        # Create comprehensive prompt for the API with examples
         system_message = """You are a data analysis assistant specialized in converting natural language queries into structured database queries. 
-        Your task is to analyze the user's query and extract:
-        1. Target columns to analyze
-        2. Columns to group by (if any)
+        Your task is to analyze the user's query about field data (likely humanitarian or development program data) and extract:
+        
+        1. Target columns to analyze (the main columns of interest)
+        2. Columns to group by (if any grouping or categorization is needed)
         3. Aggregation function to apply (e.g., mean, sum, count, value_counts)
-        4. Appropriate visualization type (bar, line, pie, scatter, box, heatmap)
+        4. Most appropriate visualization type based on the data and query
+        
+        When recommending visualizations:
+        - Bar charts: Best for comparing categories or discrete values
+        - Line charts: Best for time series or trends over a continuous variable
+        - Pie charts: Good for showing proportions of a whole (limit to 5-7 categories)
+        - Scatter plots: Ideal for showing relationships between two numeric variables
+        - Box plots: Best for showing distributions and identifying outliers
+        - Heatmaps: Good for correlation matrices or two-category comparisons
         
         Output your answer as a JSON object with these keys:
         - target_columns: array of column names
         - groupby_columns: array of column names
         - agg_function: string (one of: mean, sum, count, min, max, median, std, var, value_counts, or null)
         - viz_type: string (one of: bar, line, pie, scatter, box, heatmap)
-        - explanation: brief explanation of your interpretation
+        - explanation: explanation of your interpretation in simple terms for a non-technical user
         
-        Make sure all column names exactly match the available columns.
+        Make sure all column names exactly match the available columns. If the query mentions columns that don't exist, use the closest matching columns based on meaning.
+        """
+        
+        # Add examples to help the model understand the task better
+        examples = """
+        Example queries and expected outputs:
+        
+        Query: "Show me the average age by gender"
+        Output: {
+          "target_columns": ["age"],
+          "groupby_columns": ["gender"],
+          "agg_function": "mean",
+          "viz_type": "bar",
+          "explanation": "This will calculate the average age for each gender category and display it as a bar chart for easy comparison."
+        }
+        
+        Query: "What's the distribution of beneficiaries across different regions?"
+        Output: {
+          "target_columns": ["beneficiary_id"],
+          "groupby_columns": ["region"],
+          "agg_function": "count",
+          "viz_type": "pie",
+          "explanation": "This will count the number of beneficiaries in each region and show the proportions as a pie chart."
+        }
+        
+        Query: "Show the trend of monthly income over time"
+        Output: {
+          "target_columns": ["monthly_income"],
+          "groupby_columns": ["date"],
+          "agg_function": "mean",
+          "viz_type": "line",
+          "explanation": "This will plot the average monthly income over time as a line chart to visualize trends."
+        }
         """
         
         user_message = f"""Query: {query}
@@ -124,10 +184,12 @@ def parse_query_with_ai(query: str, df: pd.DataFrame) -> Dict[str, Any]:
         Available columns in the DataFrame:
         {json.dumps(column_info, indent=2)}
         
+        {examples}
+        
         Common aggregation functions: mean, sum, count, min, max, median, std, var, value_counts
         Common visualization types: bar, line, pie, scatter, box, heatmap
         
-        Parse this query into components for executing against the DataFrame."""
+        Parse this query into components for executing against the DataFrame of field program data."""
         
         # Make the API call to OpenRouter using Llama 4 Scout model
         logger.info("Making OpenRouter API call...")
@@ -158,39 +220,45 @@ def parse_query_with_ai(query: str, df: pd.DataFrame) -> Dict[str, Any]:
                 
             logger.info(f"Raw content: {content}")
             
-            # Try to parse the JSON response - Extract JSON from markdown code blocks if present
+            # Try to parse the JSON response
             try:
-                # Check if the response is wrapped in markdown code blocks
-                if "```json" in content and "```" in content:
-                    # Extract content between ```json and ```
-                    json_match = re.search(r'```json\s*(.*?)\s*```', content, re.DOTALL)
-                    if json_match:
-                        json_content = json_match.group(1)
-                        result = json.loads(json_content)
-                    else:
-                        # Try with just ``` (no json specifier)
-                        json_match = re.search(r'```\s*(.*?)\s*```', content, re.DOTALL)
+                # Try direct JSON parsing first
+                result = json.loads(content)
+            except json.JSONDecodeError:
+                # If that fails, try to extract JSON from markdown code blocks
+                try:
+                    # Check if the response is wrapped in markdown code blocks
+                    if "```json" in content and "```" in content:
+                        # Extract content between ```json and ```
+                        json_match = re.search(r'```json\s*(.*?)\s*```', content, re.DOTALL)
                         if json_match:
                             json_content = json_match.group(1)
                             result = json.loads(json_content)
                         else:
-                            result = json.loads(content)
-                else:
-                    result = json.loads(content)
-            except json.JSONDecodeError:
-                logger.error("Failed to parse JSON, trying to extract JSON structure manually")
-                # Try to find JSON-like structure with regex
-                json_pattern = r'\{[^}]*"target_columns"[^}]*\}'
-                match = re.search(json_pattern, content, re.DOTALL)
-                if match:
-                    try:
-                        result = json.loads(match.group(0))
-                    except:
-                        logger.error("Manual JSON extraction failed")
-                        return parse_query_rule_based(query, df)
-                else:
-                    logger.error("No JSON structure found in response")
+                            # Try with just ``` (no json specifier)
+                            json_match = re.search(r'```\s*(.*?)\s*```', content, re.DOTALL)
+                            if json_match:
+                                json_content = json_match.group(1)
+                                result = json.loads(json_content)
+                            else:
+                                return parse_query_rule_based(query, df)
+                    else:
+                        # Try to find JSON-like structure with regex
+                        json_pattern = r'\{[^}]*"target_columns"[^}]*\}'
+                        match = re.search(json_pattern, content, re.DOTALL)
+                        if match:
+                            try:
+                                result = json.loads(match.group(0))
+                            except:
+                                logger.error("Manual JSON extraction failed")
+                                return parse_query_rule_based(query, df)
+                        else:
+                            logger.error("No JSON structure found in response")
+                            return parse_query_rule_based(query, df)
+                except Exception as json_error:
+                    logger.error(f"Error parsing JSON: {str(json_error)}")
                     return parse_query_rule_based(query, df)
+                
         except Exception as e:
             logger.error(f"Error processing API response: {str(e)}")
             return parse_query_rule_based(query, df)
@@ -207,7 +275,35 @@ def parse_query_with_ai(query: str, df: pd.DataFrame) -> Dict[str, Any]:
         # Log the interpretation for debugging
         logger.info(f"AI interpretation: {validated_result['explanation']}")
         
-        # If the AI couldn't identify valid columns, fall back to rule-based
+        # If the AI couldn't identify valid columns, try to find similar columns
+        if (not validated_result["target_columns"] and not validated_result["groupby_columns"]) and result.get("target_columns") or result.get("groupby_columns"):
+            # Try to find similar column names
+            all_requested_columns = result.get("target_columns", []) + result.get("groupby_columns", [])
+            logger.info(f"Looking for similar columns to: {all_requested_columns}")
+            
+            # Simple column name matching
+            for requested_col in all_requested_columns:
+                requested_lower = requested_col.lower()
+                best_match = None
+                best_score = 0
+                
+                for actual_col in df.columns:
+                    actual_lower = actual_col.lower()
+                    # Check for substring matches
+                    if requested_lower in actual_lower or actual_lower in requested_lower:
+                        similarity = len(set(requested_lower) & set(actual_lower)) / len(set(requested_lower) | set(actual_lower))
+                        if similarity > best_score:
+                            best_score = similarity
+                            best_match = actual_col
+                
+                if best_match and best_score > 0.5:
+                    logger.info(f"Found similar column: {requested_col} -> {best_match}")
+                    if requested_col in result.get("target_columns", []):
+                        validated_result["target_columns"].append(best_match)
+                    if requested_col in result.get("groupby_columns", []):
+                        validated_result["groupby_columns"].append(best_match)
+        
+        # If we still have no valid columns, fall back to rule-based
         if not validated_result["target_columns"] and not validated_result["groupby_columns"]:
             logger.warning("AI parsing didn't identify valid columns - falling back to rule-based")
             return parse_query_rule_based(query, df)
