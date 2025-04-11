@@ -27,10 +27,10 @@ FIRE (Field Insight & Reporting Engine) is a Streamlit-based data analysis platf
 
 3. Run the application:
    ```
-   streamlit run app.py --server.port 5000
+   streamlit run app.py --server.port 8501
    ```
 
-4. Open your browser and navigate to http://localhost:5000
+4. Open your browser and navigate to http://localhost:8501
 
 ## Using FIRE
 

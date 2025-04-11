@@ -575,7 +575,87 @@ def find_column(columns_lower, columns_dict, keywords):
     Returns:
         str: Original column name if found, None otherwise
     """
+    # Common abbreviations and alternative terms
+    abbrev_map = {
+        'gender': ['gen', 'sex', 'gndr', 'm/f', 'male/female'],
+        'age': ['yrs', 'years', 'yr', 'años', 'âge', 'alter'],
+        'location': ['loc', 'place', 'addr', 'city', 'town', 'village', 'district', 'geo'],
+        'date': ['dt', 'time', 'when', 'fecha', 'datum', 'day'],
+        'program': ['prog', 'prg', 'project', 'proj', 'initiative', 'course', 'training'],
+        'status': ['stat', 'condition', 'state', 'sts', 'situation', 'category'],
+        'region': ['area', 'zone', 'sector', 'territory', 'locality'],
+        'income': ['earnings', 'salary', 'wage', 'revenue', 'money'],
+        'education': ['edu', 'school', 'academic', 'qualification', 'study', 'grad'],
+        'occupation': ['job', 'work', 'profession', 'career', 'employment'],
+        'household': ['hh', 'family', 'home', 'house', 'residence']
+    }
+    
+    # Expand keywords with their abbreviations
+    expanded_keywords = list(keywords)  # Start with original keywords
+    for keyword in keywords:
+        if keyword in abbrev_map:
+            expanded_keywords.extend(abbrev_map[keyword])
+    
+    # Scoring system for matches (higher is better)
+    scored_matches = []
+    
     for col in columns_lower:
-        if any(keyword in col for keyword in keywords):
-            return columns_dict[col]
+        score = 0
+        matched_term = None
+        
+        # Exact match - highest priority
+        for kw in expanded_keywords:
+            if col == kw:
+                score = 100
+                matched_term = kw
+                break
+        
+        # Column starts with keyword
+        if score == 0:
+            for kw in expanded_keywords:
+                if col.startswith(kw):
+                    score = 80
+                    matched_term = kw
+                    break
+        
+        # Keyword is contained in column name
+        if score == 0:
+            for kw in expanded_keywords:
+                if kw in col:
+                    score = 60
+                    matched_term = kw
+                    break
+        
+        # Parts of column contain keyword (like 'gndr_cd' for 'gender')
+        if score == 0:
+            col_parts = col.split('_')
+            for part in col_parts:
+                for kw in expanded_keywords:
+                    # Check for partial match at beginning of part
+                    if len(kw) >= 3 and part.startswith(kw[:3]):
+                        score = 40
+                        matched_term = kw
+                        break
+                if score > 0:
+                    break
+        
+        # Column contains first few letters of a longer keyword
+        if score == 0:
+            for kw in expanded_keywords:
+                if len(kw) >= 4 and kw[:3] in col:
+                    score = 30
+                    matched_term = kw
+                    break
+        
+        if score > 0:
+            scored_matches.append((col, score, matched_term))
+    
+    # Sort by score descending
+    scored_matches.sort(key=lambda x: x[1], reverse=True)
+    
+    # Return the highest scoring match if any
+    if scored_matches:
+        best_match = scored_matches[0][0]
+        return columns_dict[best_match]
+    
     return None

@@ -1,0 +1,15 @@
+# FIRE application dependencies
+streamlit
+pandas
+numpy
+plotly
+xlsxwriter
+openpyxl
+python-dotenv
+openai
+docx2txt
+faiss-cpu
+langchain
+langchain-openai
+pypdf
+requests 

@@ -8,8 +8,22 @@ import json
 import io
 import pickle
 
-# Create SQLAlchemy engine and session with enhanced connection parameters
-DATABASE_URL = os.environ.get('DATABASE_URL')
+# Create SQLAlchemy engine and session with a local SQLite database
+# Instead of using an environment variable, use a local SQLite database
+DATABASE_URL = os.environ.get('DATABASE_URL', 'sqlite:///./fire_app.db')
+
+# Configure connection arguments based on database type
+connect_args = {}
+if DATABASE_URL.startswith('sqlite'):
+    # SQLite specific arguments
+    connect_args = {'check_same_thread': False}
+else:
+    # PostgreSQL/MySQL arguments
+    connect_args = {
+        "connect_timeout": 10,
+        "application_name": "FIRE app"
+    }
+
 # Add connection pooling and retry parameters
 engine = create_engine(
     DATABASE_URL, 
@@ -18,10 +32,7 @@ engine = create_engine(
     pool_timeout=30,     # Timeout for getting a connection from pool
     pool_size=5,         # Small pool size for Replit environment
     max_overflow=10,     # Maximum number of overflow connections
-    connect_args={
-        "connect_timeout": 10,  # Connection timeout
-        "application_name": "FIRE app"  # App name for easier debugging
-    }
+    connect_args=connect_args
 )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()

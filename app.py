@@ -3,10 +3,15 @@ import pandas as pd
 import os
 import time
 import json
+import dotenv
+
+# Load environment variables from .env file
+dotenv.load_dotenv()
+
 from utils.data_processing import process_uploaded_files, combine_dataframes
 from utils.nlp_processing import process_query
 from utils.visualization import create_visualization
-from utils.export import export_to_excel, export_to_csv, export_to_pdf
+from utils.export import export_to_excel, export_to_csv, export_to_pdf, export_to_html_report
 from utils.data_cleaning import (get_data_quality_report, fix_missing_values, 
                                 handle_outliers, remove_duplicates, fix_data_types,
                                 standardize_column_names, apply_column_transformations,
@@ -50,6 +55,11 @@ def main():
     # Header
     st.title("FIRE: Field Insight & Reporting Engine")
     st.markdown("Upload field data, analyze with natural language queries, and export insights")
+    
+    # Check for API key
+    api_key = os.environ.get("OPENROUTER_API_KEY")
+    if not api_key or api_key == "your_openrouter_api_key_here":
+        st.warning("⚠️ OpenRouter API key not configured. AI features will use backup methods with limited capabilities. Please add your API key to the .env file.")
     
     # Sidebar for file upload and settings
     with st.sidebar:
@@ -375,50 +385,201 @@ def main():
             
             # Tab 4: Data Cleaning
             with tab4:
-                st.subheader("Advanced Data Cleaning and Preprocessing")
+                st.subheader("Data Cleaning and Preprocessing")
                 
                 # Initialize session state for cleaned dataframe
                 if 'cleaned_df' not in st.session_state:
                     st.session_state.cleaned_df = current_data.copy()
                 
-                # Show data quality report
-                with st.expander("Data Quality Report", expanded=True):
-                    if st.button("Generate Data Quality Report"):
-                        with st.spinner("Analyzing data quality..."):
-                            quality_report = get_data_quality_report(current_data)
-                            
-                            if quality_report["status"] == "error":
-                                st.error(quality_report["error"])
-                            else:
-                                # General statistics
-                                st.markdown("### General Statistics")
-                                st.write(f"- Total rows: {quality_report['row_count']}")
-                                st.write(f"- Total columns: {quality_report['column_count']}")
-                                st.write(f"- Duplicate rows: {quality_report['duplicates']['count']} ({quality_report['duplicates']['percentage']:.2f}%)")
-                                
-                                # Missing values
-                                if quality_report["missing_values"]:
-                                    st.markdown("### Missing Values")
-                                    missing_df = pd.DataFrame({
-                                        "Column": list(quality_report["missing_values"].keys()),
-                                        "Count": [m["count"] for m in quality_report["missing_values"].values()],
-                                        "Percentage": [f"{m['percentage']:.2f}%" for m in quality_report["missing_values"].values()]
-                                    })
-                                    st.dataframe(missing_df)
-                                
-                                # Outliers
-                                if quality_report["outliers"]:
-                                    st.markdown("### Outliers")
-                                    outlier_df = pd.DataFrame({
-                                        "Column": list(quality_report["outliers"].keys()),
-                                        "Count": [o["count"] for o in quality_report["outliers"].values()],
-                                        "Percentage": [f"{o['percentage']:.2f}%" for o in quality_report["outliers"].values()],
-                                        "Lower Bound": [o["lower_bound"] for o in quality_report["outliers"].values()],
-                                        "Upper Bound": [o["upper_bound"] for o in quality_report["outliers"].values()]
-                                    })
-                                    st.dataframe(outlier_df)
+                # Add quick actions for common cleaning tasks
+                st.markdown("### Quick Actions")
+                quick_action_cols = st.columns(4)
                 
-                # Missing value handling
+                with quick_action_cols[0]:
+                    if st.button("Fix Missing Values", key="quick_fix_missing"):
+                        with st.spinner("Automatically fixing missing values..."):
+                            try:
+                                # Auto-detect strategies based on column types
+                                auto_strategies = {}
+                                for col in current_data.columns:
+                                    missing_count = current_data[col].isna().sum()
+                                    if missing_count > 0:
+                                        if pd.api.types.is_numeric_dtype(current_data[col]):
+                                            auto_strategies[col] = "median"  # Safe choice for numeric
+                                        else:
+                                            auto_strategies[col] = "mode"  # Safe choice for categorical
+                                
+                                if auto_strategies:
+                                    fixed_df = fix_missing_values(current_data, auto_strategies)
+                                    st.session_state.cleaned_df = fixed_df
+                                    st.success(f"Fixed missing values in {len(auto_strategies)} columns using automatic strategies")
+                                else:
+                                    st.info("No missing values detected in the dataset")
+                            except Exception as e:
+                                st.error(f"Error fixing missing values: {str(e)}")
+                
+                with quick_action_cols[1]:
+                    if st.button("Fix Outliers", key="quick_fix_outliers"):
+                        with st.spinner("Automatically handling outliers..."):
+                            try:
+                                # Auto-detect numeric columns for outlier handling
+                                numeric_cols = [col for col in current_data.columns 
+                                              if pd.api.types.is_numeric_dtype(current_data[col])]
+                                
+                                if numeric_cols:
+                                    auto_strategies = {col: "clip" for col in numeric_cols}  # Use clipping as safest choice
+                                    fixed_df = handle_outliers(
+                                        st.session_state.cleaned_df 
+                                        if 'cleaned_df' in st.session_state else current_data,
+                                        auto_strategies
+                                    )
+                                    st.session_state.cleaned_df = fixed_df
+                                    st.success(f"Handled outliers in {len(numeric_cols)} numeric columns")
+                                else:
+                                    st.info("No numeric columns detected for outlier handling")
+                            except Exception as e:
+                                st.error(f"Error handling outliers: {str(e)}")
+                
+                with quick_action_cols[2]:
+                    if st.button("Remove Duplicates", key="quick_remove_dupes"):
+                        with st.spinner("Removing duplicate rows..."):
+                            try:
+                                df_to_clean = st.session_state.cleaned_df if 'cleaned_df' in st.session_state else current_data
+                                duplicate_count = df_to_clean.duplicated().sum()
+                                
+                                if duplicate_count > 0:
+                                    deduped_df = remove_duplicates(df_to_clean, None)
+                                    rows_removed = len(df_to_clean) - len(deduped_df)
+                                    st.session_state.cleaned_df = deduped_df
+                                    st.success(f"Removed {rows_removed} duplicate rows")
+                                else:
+                                    st.info("No duplicate rows detected in the dataset")
+                            except Exception as e:
+                                st.error(f"Error removing duplicates: {str(e)}")
+                
+                with quick_action_cols[3]:
+                    if st.button("Standardize Names", key="quick_standardize"):
+                        with st.spinner("Standardizing column names..."):
+                            try:
+                                df_to_clean = st.session_state.cleaned_df if 'cleaned_df' in st.session_state else current_data
+                                standardized_df = standardize_column_names(df_to_clean)
+                                st.session_state.cleaned_df = standardized_df
+                                st.success("Column names standardized")
+                                st.write("New column names:")
+                                st.write(", ".join(standardized_df.columns.tolist()))
+                            except Exception as e:
+                                st.error(f"Error standardizing column names: {str(e)}")
+                
+                # Apply button for all quick actions
+                if st.button("Run All Quick Fixes", key="run_all_fixes"):
+                    with st.spinner("Applying all quick fixes..."):
+                        try:
+                            # Start with current data or already cleaned data
+                            df_to_clean = st.session_state.cleaned_df if 'cleaned_df' in st.session_state else current_data
+                            
+                            # 1. Fix missing values
+                            auto_strategies = {}
+                            for col in df_to_clean.columns:
+                                missing_count = df_to_clean[col].isna().sum()
+                                if missing_count > 0:
+                                    if pd.api.types.is_numeric_dtype(df_to_clean[col]):
+                                        auto_strategies[col] = "median"
+                                    else:
+                                        auto_strategies[col] = "mode"
+                            
+                            if auto_strategies:
+                                df_to_clean = fix_missing_values(df_to_clean, auto_strategies)
+                            
+                            # 2. Handle outliers
+                            numeric_cols = [col for col in df_to_clean.columns 
+                                          if pd.api.types.is_numeric_dtype(df_to_clean[col])]
+                            
+                            if numeric_cols:
+                                auto_strategies = {col: "clip" for col in numeric_cols}
+                                df_to_clean = handle_outliers(df_to_clean, auto_strategies)
+                            
+                            # 3. Remove duplicates
+                            df_to_clean = remove_duplicates(df_to_clean, None)
+                            
+                            # 4. Standardize column names
+                            df_to_clean = standardize_column_names(df_to_clean)
+                            
+                            # Update the cleaned dataframe
+                            st.session_state.cleaned_df = df_to_clean
+                            st.success("All quick fixes applied successfully!")
+                            
+                            # Show data quality comparison
+                            old_quality = get_data_quality_report(current_data)
+                            new_quality = get_data_quality_report(df_to_clean)
+                            
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                st.markdown("**Before Cleaning:**")
+                                st.write(f"- Rows: {old_quality['row_count']}")
+                                st.write(f"- Missing values: {sum(v['count'] for v in old_quality['missing_values'].values()) if 'missing_values' in old_quality else 0}")
+                                st.write(f"- Duplicates: {old_quality['duplicates']['count']}")
+                                st.write(f"- Outliers: {sum(v['count'] for v in old_quality['outliers'].values()) if 'outliers' in old_quality else 0}")
+                            
+                            with col2:
+                                st.markdown("**After Cleaning:**")
+                                st.write(f"- Rows: {new_quality['row_count']}")
+                                st.write(f"- Missing values: {sum(v['count'] for v in new_quality['missing_values'].values()) if 'missing_values' in new_quality else 0}")
+                                st.write(f"- Duplicates: {new_quality['duplicates']['count']}")
+                                st.write(f"- Outliers: {sum(v['count'] for v in new_quality['outliers'].values()) if 'outliers' in new_quality else 0}")
+                        
+                        except Exception as e:
+                            st.error(f"Error applying all fixes: {str(e)}")
+                
+                # Show data quality report with toggle
+                data_quality_toggle = st.checkbox("Show Data Quality Report", value=False)
+                
+                if data_quality_toggle:
+                    st.markdown("### Data Quality Report")
+                    with st.spinner("Generating data quality report..."):
+                        df_to_analyze = st.session_state.cleaned_df if 'cleaned_df' in st.session_state else current_data
+                        quality_report = get_data_quality_report(df_to_analyze)
+                        
+                        if quality_report['status'] == 'success':
+                            # Summary statistics
+                            st.markdown("#### Summary")
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                st.metric("Total Rows", quality_report['row_count'])
+                            with col2:
+                                st.metric("Total Columns", quality_report['column_count'])
+                            with col3:
+                                duplicate_pct = quality_report['duplicates']['percentage']
+                                st.metric("Duplicate Rows", f"{quality_report['duplicates']['count']} ({duplicate_pct:.1f}%)")
+                            
+                            # Missing values summary
+                            if quality_report['missing_values']:
+                                st.markdown("#### Missing Values")
+                                missing_df = pd.DataFrame([
+                                    {"Column": col, "Missing Count": data['count'], "Missing %": f"{data['percentage']:.1f}%"}
+                                    for col, data in quality_report['missing_values'].items()
+                                ])
+                                st.dataframe(missing_df)
+                            else:
+                                st.success("No missing values found in the dataset!")
+                            
+                            # Outliers summary
+                            if quality_report['outliers']:
+                                st.markdown("#### Outliers")
+                                outlier_df = pd.DataFrame([
+                                    {"Column": col, "Outlier Count": data['count'], "Outlier %": f"{data['percentage']:.1f}%"}
+                                    for col, data in quality_report['outliers'].items()
+                                ])
+                                st.dataframe(outlier_df)
+                            else:
+                                st.success("No outliers detected in numeric columns!")
+                        else:
+                            st.error(quality_report['error'])
+                
+                # Show advanced options with toggle
+                st.markdown("### Advanced Options")
+                st.info("Use these options to have more control over the cleaning process")
+                
+                # Use existing expanders for advanced options
                 with st.expander("Handle Missing Values", expanded=False):
                     st.markdown("### Fix Missing Values")
                     st.write("Select columns and strategies to handle missing values")
@@ -472,227 +633,43 @@ def main():
                                 except Exception as e:
                                     st.error(f"Error fixing missing values: {str(e)}")
                 
-                # Outlier handling
-                with st.expander("Handle Outliers", expanded=False):
-                    st.markdown("### Fix Outliers")
-                    st.write("Select columns and strategies to handle outliers")
+                # Add a save button to replace or save as new dataset
+                if 'cleaned_df' in st.session_state and not st.session_state.cleaned_df.empty:
+                    st.markdown("### Save Cleaned Data")
+                    save_col1, save_col2 = st.columns([3, 1])
                     
-                    # Get numeric columns
-                    numeric_cols = [col for col in current_data.columns if pd.api.types.is_numeric_dtype(current_data[col])]
-                    
-                    if not numeric_cols:
-                        st.info("No numeric columns detected for outlier handling.")
-                    else:
-                        # Create multiselect for columns
-                        selected_outlier_cols = st.multiselect(
-                            "Select numeric columns to check for outliers:",
-                            numeric_cols,
-                            default=numeric_cols[:min(3, len(numeric_cols))]
+                    with save_col1:
+                        save_option = st.radio(
+                            "What would you like to do with the cleaned data?",
+                            ["Replace current dataset", "Create new dataset"],
+                            horizontal=True
                         )
                         
-                        # Define strategies for each selected column
-                        outlier_strategies = {}
-                        for col in selected_outlier_cols:
-                            strategy = st.selectbox(
-                                f"Strategy for {col}:",
-                                ["clip", "remove", "iqr"],
-                                key=f"outlier_strategy_{col}"
+                        if save_option == "Create new dataset":
+                            new_name = st.text_input(
+                                "Enter name for the new dataset:",
+                                value=f"{st.session_state.current_df}_cleaned"
                             )
-                            outlier_strategies[col] = strategy
-                        
-                        if st.button("Apply Outlier Fixes"):
-                            with st.spinner("Handling outliers..."):
-                                try:
-                                    fixed_df = handle_outliers(
-                                        st.session_state.cleaned_df 
-                                        if 'cleaned_df' in st.session_state else current_data, 
-                                        outlier_strategies
-                                    )
-                                    st.session_state.cleaned_df = fixed_df
-                                    st.success(f"Successfully handled outliers in {len(selected_outlier_cols)} column(s)")
-                                    st.write("Preview of cleaned data:")
-                                    st.dataframe(fixed_df.head())
-                                except Exception as e:
-                                    st.error(f"Error handling outliers: {str(e)}")
-                
-                # Data type conversion
-                with st.expander("Fix Data Types", expanded=False):
-                    st.markdown("### Convert Data Types")
-                    st.write("Select columns and target data types")
                     
-                    # Create multiselect for columns
-                    selected_type_cols = st.multiselect(
-                        "Select columns to convert:",
-                        current_data.columns.tolist(),
-                        default=[]
-                    )
-                    
-                    # Define target types for each selected column
-                    type_conversions = {}
-                    for col in selected_type_cols:
-                        target_type = st.selectbox(
-                            f"Target type for {col}:",
-                            ["int", "float", "str", "datetime", "category"],
-                            key=f"type_conversion_{col}"
-                        )
-                        type_conversions[col] = target_type
-                    
-                    if st.button("Apply Type Conversions"):
-                        with st.spinner("Converting data types..."):
+                    with save_col2:
+                        if st.button("Save Changes", key="save_cleaned_data"):
                             try:
-                                converted_df = fix_data_types(
-                                    st.session_state.cleaned_df 
-                                    if 'cleaned_df' in st.session_state else current_data, 
-                                    type_conversions
-                                )
-                                st.session_state.cleaned_df = converted_df
-                                st.success(f"Successfully converted data types for {len(selected_type_cols)} column(s)")
-                                st.write("Preview of converted data:")
-                                st.dataframe(converted_df.head())
-                                st.write("New data types:")
-                                st.write(converted_df.dtypes)
-                            except Exception as e:
-                                st.error(f"Error converting data types: {str(e)}")
-                
-                # Column transformations
-                with st.expander("Apply Transformations", expanded=False):
-                    st.markdown("### Apply Column Transformations")
-                    st.write("Select columns and transformations to apply")
-                    
-                    # Create multiselect for columns
-                    selected_transform_cols = st.multiselect(
-                        "Select columns to transform:",
-                        current_data.columns.tolist(),
-                        default=[]
-                    )
-                    
-                    # Define transformations for each selected column
-                    transformations = {}
-                    for col in selected_transform_cols:
-                        is_numeric = pd.api.types.is_numeric_dtype(current_data[col])
-                        is_string = pd.api.types.is_string_dtype(current_data[col])
-                        
-                        transform_options = []
-                        if is_numeric:
-                            transform_options.extend(["log", "sqrt", "normalize", "standardize"])
-                        if is_string:
-                            transform_options.extend(["uppercase", "lowercase", "title", "trim"])
-                        
-                        if transform_options:
-                            transform = st.selectbox(
-                                f"Transformation for {col}:",
-                                transform_options,
-                                key=f"transform_{col}"
-                            )
-                            transformations[col] = transform
-                        else:
-                            st.info(f"No applicable transformations for column {col}")
-                    
-                    if st.button("Apply Transformations"):
-                        with st.spinner("Applying transformations..."):
-                            try:
-                                transformed_df = apply_column_transformations(
-                                    st.session_state.cleaned_df 
-                                    if 'cleaned_df' in st.session_state else current_data, 
-                                    transformations
-                                )
-                                st.session_state.cleaned_df = transformed_df
-                                st.success(f"Successfully applied transformations to {len(selected_transform_cols)} column(s)")
-                                st.write("Preview of transformed data:")
-                                st.dataframe(transformed_df.head())
-                            except Exception as e:
-                                st.error(f"Error applying transformations: {str(e)}")
-                
-                # Remove duplicates
-                with st.expander("Remove Duplicates", expanded=False):
-                    st.markdown("### Remove Duplicate Rows")
-                    
-                    # Check if there are any duplicates
-                    duplicate_count = current_data.duplicated().sum()
-                    
-                    if duplicate_count == 0:
-                        st.success("No duplicate rows detected in the dataset!")
-                    else:
-                        st.write(f"Detected {duplicate_count} duplicate rows ({(duplicate_count/len(current_data))*100:.2f}%)")
-                        
-                        # Option to select columns for duplicate detection
-                        use_subset = st.checkbox("Consider only specific columns for duplicate detection")
-                        
-                        subset_cols = None
-                        if use_subset:
-                            subset_cols = st.multiselect(
-                                "Select columns to consider for duplicates:",
-                                current_data.columns.tolist()
-                            )
-                        
-                        if st.button("Remove Duplicates"):
-                            with st.spinner("Removing duplicates..."):
-                                try:
-                                    deduped_df = remove_duplicates(
-                                        st.session_state.cleaned_df 
-                                        if 'cleaned_df' in st.session_state else current_data, 
-                                        subset_cols
-                                    )
-                                    rows_removed = len(current_data) - len(deduped_df)
-                                    st.session_state.cleaned_df = deduped_df
-                                    st.success(f"Successfully removed {rows_removed} duplicate rows")
-                                    st.write("Preview of de-duplicated data:")
-                                    st.dataframe(deduped_df.head())
-                                except Exception as e:
-                                    st.error(f"Error removing duplicates: {str(e)}")
-                
-                # Standardize column names
-                with st.expander("Standardize Column Names", expanded=False):
-                    st.markdown("### Standardize Column Names")
-                    st.write("Convert column names to lowercase, replace spaces with underscores, and remove special characters")
-                    
-                    if st.button("Standardize Names"):
-                        with st.spinner("Standardizing column names..."):
-                            try:
-                                standardized_df = standardize_column_names(
-                                    st.session_state.cleaned_df 
-                                    if 'cleaned_df' in st.session_state else current_data
-                                )
+                                if save_option == "Replace current dataset":
+                                    st.session_state.data[st.session_state.current_df] = st.session_state.cleaned_df
+                                    st.success(f"Successfully updated dataset: {st.session_state.current_df}")
+                                else:
+                                    # Create new dataset
+                                    st.session_state.data[new_name] = st.session_state.cleaned_df
+                                    if new_name not in st.session_state.selected_files:
+                                        st.session_state.selected_files.append(new_name)
+                                    st.session_state.current_df = new_name
+                                    st.success(f"Created new dataset: {new_name}")
                                 
-                                # Show before/after comparison
-                                comparison = pd.DataFrame({
-                                    "Original Names": current_data.columns.tolist(),
-                                    "Standardized Names": standardized_df.columns.tolist()
-                                })
-                                st.write("Column name changes:")
-                                st.dataframe(comparison)
-                                
-                                st.session_state.cleaned_df = standardized_df
-                                st.success("Successfully standardized column names")
+                                # Clear the cleaned_df to start fresh
+                                st.session_state.cleaned_df = None
+                                st.rerun()
                             except Exception as e:
-                                st.error(f"Error standardizing column names: {str(e)}")
-                
-                # Save cleaned data
-                st.markdown("### Save Cleaned Data")
-                save_option = st.radio(
-                    "What would you like to do with the cleaned data?",
-                    ["Replace current dataset", "Create new dataset"]
-                )
-                
-                if st.button("Save Changes"):
-                    if 'cleaned_df' in st.session_state and not st.session_state.cleaned_df.empty:
-                        try:
-                            if save_option == "Replace current dataset":
-                                st.session_state.data[st.session_state.current_df] = st.session_state.cleaned_df
-                                st.success(f"Successfully updated dataset: {st.session_state.current_df}")
-                            else:
-                                new_name = f"{st.session_state.current_df}_cleaned"
-                                st.session_state.data[new_name] = st.session_state.cleaned_df
-                                st.session_state.selected_files.append(new_name)
-                                st.session_state.current_df = new_name
-                                st.success(f"Created new dataset: {new_name}")
-                            # Clear the cleaned_df from session state
-                            st.session_state.cleaned_df = None
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Error saving cleaned data: {str(e)}")
-                    else:
-                        st.warning("No cleaned data to save. Please apply some data cleaning operations first.")
+                                st.error(f"Error saving cleaned data: {str(e)}")
             
             # Tab 5: Document Analysis
             with tab5:
@@ -888,13 +865,13 @@ def main():
                 else:
                     st.info("Please upload and select a dataset to use advanced analysis features.")
             
-            # Tab 5: Document Analysis
+            # Tab 6: Export Data and Insights
             with tab6:
                 st.subheader("Export Data and Insights")
                 
                 export_options = st.radio(
                     "What would you like to export?",
-                    ["Raw Data", "Query Results", "Current Visualization"]
+                    ["Raw Data", "Query Results", "Current Visualization", "Full Report"]
                 )
                 
                 col1, col2, col3 = st.columns(3)
@@ -906,7 +883,9 @@ def main():
                     with col1:
                         if st.button("Export to Excel"):
                             with st.spinner("Generating Excel file..."):
-                                export_path = export_to_excel(data_to_export, filename)
+                                # Use the enhanced Excel export with metadata
+                                include_metadata = st.checkbox("Include metadata sheet", value=True)
+                                export_path = export_to_excel(data_to_export, filename, include_metadata)
                                 time.sleep(1)  # Simulate processing time
                                 st.success("Excel file generated successfully!")
                                 
@@ -1003,6 +982,80 @@ def main():
                                     )
                                     # Clean up the temporary file
                                     os.remove(export_path)
+                        
+                        with col2:
+                            if st.button("Export to HTML Report"):
+                                with st.spinner("Generating interactive HTML report..."):
+                                    fig = create_visualization(selected_viz_data["result"], selected_viz_data["viz_type"], selected_viz_data["query"])
+                                    description = f"This report shows the results of the query: '{selected_viz_data['query']}'"
+                                    export_path = export_to_html_report(
+                                        selected_viz_data["result"], 
+                                        fig, 
+                                        f"FIRE Report: {selected_viz_data['query']}", 
+                                        description, 
+                                        filename
+                                    )
+                                    time.sleep(1)  # Simulate processing time
+                                    st.success("HTML report generated and opened in browser!")
+                                    
+                                    st.download_button(
+                                        label="Download HTML Report",
+                                        data=open(export_path, "rb").read(),
+                                        file_name=f"{filename}.html",
+                                        mime="text/html"
+                                    )
+                                    
+                                    # Show file path
+                                    st.info(f"Report saved to: {export_path}")
+                
+                elif export_options == "Full Report" and st.session_state.visualization_history:
+                    st.markdown("### Create a comprehensive report with data, visualizations, and insights")
+                    
+                    # Select title and description
+                    report_title = st.text_input("Report Title:", value=f"FIRE Analysis Report - {st.session_state.current_df}")
+                    report_description = st.text_area("Report Description:", value="This report was generated using FIRE (Field Insight & Reporting Engine).")
+                    
+                    # Select visualizations to include
+                    available_viz = [item["query"] for item in st.session_state.visualization_history]
+                    selected_vizs = st.multiselect("Select visualizations to include:", available_viz)
+                    
+                    if st.button("Generate Full Report") and selected_vizs:
+                        with st.spinner("Generating comprehensive report..."):
+                            # Get the first selected visualization to use as the main one
+                            main_viz_data = next((item for item in st.session_state.visualization_history if item["query"] == selected_vizs[0]), None)
+                            
+                            if main_viz_data:
+                                # Create the main figure
+                                fig = create_visualization(main_viz_data["result"], main_viz_data["viz_type"], main_viz_data["query"])
+                                
+                                # Create a comprehensive description including all selected viz
+                                comprehensive_desc = f"{report_description}\n\nThis report includes analysis of:\n"
+                                for viz_name in selected_vizs:
+                                    comprehensive_desc += f"- {viz_name}\n"
+                                
+                                # Generate filename
+                                filename = f"full_report_{int(time.time())}"
+                                
+                                # Create the HTML report
+                                export_path = export_to_html_report(
+                                    current_data.head(50),  # We just show a sample of the main data 
+                                    fig, 
+                                    report_title, 
+                                    comprehensive_desc, 
+                                    filename
+                                )
+                                
+                                st.success("Full HTML report generated and opened in browser!")
+                                
+                                st.download_button(
+                                    label="Download Full Report",
+                                    data=open(export_path, "rb").read(),
+                                    file_name=f"{filename}.html",
+                                    mime="text/html"
+                                )
+                                
+                                # Show file path
+                                st.info(f"Report saved to: {export_path}")
                 else:
                     st.info("No data available for export. Run some queries or visualizations first.")
 
